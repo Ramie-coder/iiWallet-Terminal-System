@@ -7,23 +7,18 @@
 #include <algorithm>
 #include <sstream>
 #include <stdexcept>
+#include <set>
 
-// ==========================================
-// [第 4 迭代新增] 自訂例外處理類別 (Custom Exception)
-// ==========================================
 class WalletException : public std::runtime_error {
 public:
     explicit WalletException(const std::string& message) : std::runtime_error(message) {}
 };
 
-// ==========================================
-// 1. 類別繼承架構 (iWallet Domain)
-// ==========================================
 class WalletItem {
 protected:
-    std::string timestamp; // 交易時間 (YYYY-MM-DD)
-    int amount;            // 金額
-    std::string merchant;  // 交易商家/備註
+    std::string timestamp; 
+    int amount;            
+    std::string merchant;  
 public:
     WalletItem(std::string t, int a, std::string m) : timestamp(t), amount(a), merchant(m) {}
     virtual ~WalletItem() = default;
@@ -37,10 +32,9 @@ public:
     virtual std::string getDetailAttribute() const = 0;
 };
 
-// 衍生類別 1：iPay 信用卡消費 (支出)
 class iPayTransaction : public WalletItem {
 private:
-    std::string creditCard; // 使用哪張卡片付款
+    std::string creditCard; 
 public:
     iPayTransaction(std::string t, int a, std::string m, std::string card) 
         : WalletItem(t, a, m), creditCard(card) {}
@@ -53,10 +47,9 @@ public:
     std::string getDetailAttribute() const override { return creditCard; }
 };
 
-// 衍生類別 2：雲端帳戶儲值/轉入 (收入)
 class CloudTransfer : public WalletItem {
 private:
-    std::string bankSource; // 轉入來源銀行
+    std::string bankSource; 
 public:
     CloudTransfer(std::string t, int a, std::string m, std::string bank) 
         : WalletItem(t, a, m), bankSource(bank) {}
@@ -69,9 +62,6 @@ public:
     std::string getDetailAttribute() const override { return bankSource; }
 };
 
-// ==========================================
-// 2. 防呆與畫面清理工具 (第 4 迭代優化：結合 Try-Catch)
-// ==========================================
 int getValidInt() {
     int val;
     while (true) {
@@ -101,18 +91,21 @@ void clearScreen() {
 #endif
 }
 
-// ==========================================
-// 3. iWallet 核心管理器
-// ==========================================
 class iWalletManager {
 private:
-    std::vector<std::unique_ptr<WalletItem>> walletRecords;
+    std::vector<WalletItem*> walletRecords;
+    std::set<std::string> registeredCards; // 儲存使用者輸入過的自訂卡片
     const std::string filename = "iwallet_data.txt";
     int balance = 45200; 
 
 public:
     iWalletManager() { loadFromCloud(); }
-    ~iWalletManager() { syncToCloud(); }
+    ~iWalletManager() { 
+        syncToCloud(); 
+        for (auto item : walletRecords) {
+            delete item;
+        }
+    }
 
     void loadFromCloud() {
         std::ifstream file(filename);
@@ -133,10 +126,11 @@ public:
             std::getline(ss, merch, ',');
 
             if (type == "IPAY_SPEND") {
-                walletRecords.push_back(std::make_unique<iPayTransaction>(time, amt, merch, attr));
+                walletRecords.push_back(new iPayTransaction(time, amt, merch, attr));
+                registeredCards.insert(attr); // 讀檔時自動註冊卡片
                 balance -= amt;
             } else if (type == "CLOUD_TRF") {
-                walletRecords.push_back(std::make_unique<CloudTransfer>(time, amt, merch, attr));
+                walletRecords.push_back(new CloudTransfer(time, amt, merch, attr));
                 balance += amt;
             }
         }
@@ -155,43 +149,51 @@ public:
 
     int getBalance() const { return balance; }
 
+    void printRegisteredCards() const {
+        if (registeredCards.empty()) {
+            std::cout << " [💳] 尚未綁定任何自訂卡片 (請透過功能 1 新增消費來自動綁定)\n";
+        } else {
+            int count = 1;
+            for (const auto& card : registeredCards) {
+                std::cout << " [💳 " << count++ << "] " << card << "  | 已連線可用\n";
+            }
+        }
+    }
+
     void executeTransaction(int choice) {
         std::string time, merch, attr;
         int amt;
 
         std::cout << "請輸入交易日期 (YYYY-MM-DD): ";
         std::cin >> time;
-        
-        // 第 4 迭代：日期格式基本防呆驗證
-        if (time.length() != 10 || time[4] != '-' || time[7] != '-') {
-            std::cout << "⚠️ 警告: 日期格式建議為 YYYY-MM-DD，系統已自動記錄。\n";
-        }
 
         std::cout << "請輸入金額 (TWD): ";
         amt = getValidInt();
         
         if (choice == 1) {
-            std::cout << "請選擇付款卡片 (1.Visa 4321 / 2.MasterCard 8888): ";
+            // ✨ 自由手打卡片名稱
+            std::cout << "請輸入自訂付款卡片名稱 (如: 國泰 CUBE、中信 LINE Pay): ";
             std::getline(std::cin, attr);
-            attr = (attr == "2") ? "MasterCard (8888)" : "Visa (4321)";
-            std::cout << "請輸入消費商店 (如: 麥當勞 / 星巴克): ";
+            
+            // ✨ 自由手打商家名稱
+            std::cout << "請輸入自訂消費商家/商店名稱 (如: 蝦皮購物、大潤發): ";
             std::getline(std::cin, merch);
             
-            // 第 4 迭代優化：若可用餘額不足，拋出例外提示（但不崩潰）
             if (balance - amt < 0) {
-                std::cout << "⚠️ [iWallet 提醒] 當前餘額不足以支付此筆消費，錢包將出現負債餘額。\n";
+                std::cout << "⚠️ [iWallet 提醒] 當前餘額不足，錢包將出現負債餘額。\n";
             }
             
-            walletRecords.push_back(std::make_unique<iPayTransaction>(time, amt, merch, attr));
+            walletRecords.push_back(new iPayTransaction(time, amt, merch, attr));
+            registeredCards.insert(attr); // 動態把這張卡片註冊到主畫面
             balance -= amt;
-            std::cout << "💸 iPay 認證成功！已成功扣款 $" << amt << " TWD。\n";
+            std::cout << "💸 iPay 認證成功！已透過 " << attr << " 扣款 $" << amt << " TWD。\n";
         } else {
             std::cout << "請輸入轉入來源銀行 (如: 中信銀行 / 郵局): ";
             std::getline(std::cin, attr);
-            std::cout << "請輸入轉入備註: ";
+            std::cout << "請輸入轉入儲值備註 (如: 零用錢、薪水): ";
             std::getline(std::cin, merch);
 
-            walletRecords.push_back(std::make_unique<CloudTransfer>(time, amt, merch, attr));
+            walletRecords.push_back(new CloudTransfer(time, amt, merch, attr));
             balance += amt;
             std::cout << "📥 帳戶儲值成功！已存入 $" << amt << " TWD。\n";
         }
@@ -203,7 +205,7 @@ public:
             return;
         }
 
-        std::sort(walletRecords.begin(), walletRecords.end(), [](const auto& a, const auto& b) {
+        std::sort(walletRecords.begin(), walletRecords.end(), [](const WalletItem* a, const WalletItem* b) {
             return a->getTimestamp() < b->getTimestamp();
         });
 
@@ -245,9 +247,6 @@ public:
     }
 };
 
-// ==========================================
-// 4. 主執行程序
-// ==========================================
 int main() {
     iWalletManager wallet;
     int choice = 0;
@@ -259,9 +258,11 @@ int main() {
         std::cout << " [👤 帳戶持有者: Premium User]\n";
         std::cout << " [💵 錢包可用餘額: $" << wallet.getBalance() << " TWD]\n\n";
         std::cout << " 📱 --- 錢包主要卡片 (My Cards) ---\n";
-        std::cout << " [💳 1] Visa 聯名卡 (末碼: 4321)  | 可用\n";
-        std::cout << " [💳 2] MasterCard (末碼: 8888)  | 可用\n\n";
-        std::cout << " ⚙️ --- 錢包功能選單 (Wallet Menu) ---\n";
+        
+        // ✨ 這裡會根據你輸入過的卡片，動態把新卡片印在主畫面上！
+        wallet.printRegisteredCards(); 
+        
+        std::cout << "\n ⚙️ --- 錢包功能選單 (Wallet Menu) ---\n";
         std::cout << "  1. iPay 快速感應消費 (Credit Card Expense)\n";
         std::cout << "  2. 📥 連結帳戶轉入资金 (Cloud Top-up)\n";
         std::cout << "  3. 📜 檢視 iWallet 歷史對帳單 (Date Sort)\n";
@@ -292,4 +293,6 @@ int main() {
                 std::cout << "❌ 指令錯誤，請輸入 1 至 5 之間的數位指令。\n";
         }
     }
+    return 0;
 }
+
